@@ -2,10 +2,16 @@ from genericpath import isfile
 import os, sys, requests, subprocess, tempfile, shutil
 import datetime
 from pathlib import Path
+from typing import List
+
+MIN_PYTHON = (3, 6)
+if sys.version_info < MIN_PYTHON:
+    sys.exit("Python %s.%s or later is required.\n" % MIN_PYTHON)
+
 
 class TowerApiError(Exception):
     def __init__(self,*args, **kwargs):
-        super.__init__(args,kwargs)
+        super().__init__(args,kwargs)
 
 class TowerApi:
     def __init__(self,endpoint : str, bearer: str, params: dict ):
@@ -13,14 +19,22 @@ class TowerApi:
         self._headers = {'Authorization': f'Bearer {bearer}'}
         self._params = params
 
-    def _handle_get_json(self, endpoint, headers ={}, params ={}) -> dict:
+    def _handle_get_json(self, endpoint, headers=None, params=None) -> dict:
+        if params is None:
+            params = {}
+        if headers is None:
+            headers = {}
         response = requests.get(self._endpoint + f"/{endpoint}", headers={**self._headers, ** headers}, params=params)
         if round(response.status_code/100) != 2:
             raise TowerApiError(f"request to \"{response.url}\" returned a non 200 status "
                                 f"code of {response.status_code}")
         return response.json()
 
-    def _handle_json_post_json(self, endpoint, json, headers = {}, params = {}, expected_status_code = 204) -> dict:
+    def _handle_json_post_json(self, endpoint, json, headers=None, params=None, expected_status_code = 204) -> dict:
+        if params is None:
+            params = {}
+        if headers is None:
+            headers = {}
         headers = {**self._headers, **headers}
         response = requests.post(self._endpoint + f"/{endpoint}",json=json, headers = headers, params = params)
         if response.status_code != expected_status_code:
@@ -28,7 +42,11 @@ class TowerApi:
                                 f"{response.status_code}. {expected_status_code} was expected")
         return response.json()
 
-    def _handle_delete_json(self, endpoint, headers = {}, params = {}, expected_status_code = 204) -> dict:
+    def _handle_delete_json(self, endpoint, headers=None, params=None, expected_status_code = 204) -> dict:
+        if params is None:
+            params = {}
+        if headers is None:
+            headers = {}
         headers = {**self._headers, ** headers}
         response = requests.delete(self._endpoint + f"/{endpoint}", headers=headers, params = params)
         if response.status_code != expected_status_code:
@@ -66,7 +84,7 @@ class TowerApi:
                 }
             }
         }
-        response = self.handle_json_post("credentials", credential_data,params=self._params)
+        response = self._handle_json_post_json("credentials", credential_data,params=self._params)
         return response["credentialsId"]
 
     def remove_credentials(self, credentials_id: str):
@@ -96,8 +114,8 @@ class TowerApi:
 
     def make_compute_primary(self, compute_id: str) -> bool:
         try:
-            self._handle_json_post_json(f'compute-envs/{compute_id}/primary', params=self._params)
-        except TowerApiError as e:
+            self._handle_get_json(f'compute-envs/{compute_id}/primary', params=self._params)
+        except TowerApiError:
             return False
 
         return True
@@ -105,11 +123,11 @@ class TowerApi:
     def remove_compute(self, compute_id: str) -> bool:
         try:
             self._handle_delete_json(f'compute-envs/{compute_id}', params=self._params)
-        except TowerApiError as e:
+        except TowerApiError:
             return False
         return True
 
-    def add_workflow(self, compute_id: str, url: str, wf: dict, labels_id: str, config_text: str, katana_username: str):
+    def add_workflow(self, compute_id: str, url: str, wf: dict, labels_id: List[str], config_text: str, katana_username: str):
         pipeline_data = {
             "name": wf["name"],
             "description": wf["description"],
@@ -152,7 +170,7 @@ class TowerApi:
                 if value == 0:
                     self.remove_label(key)
 
-    def add_top_nfcore_workflows(self, compute_id: str, label_id: str, count: int =1):
+    def add_top_nfcore_workflows(self, compute_id: str, label_id: str, katana_username: str, count: int =1):
         config_text = ""
         if os.path.isfile('nextflow.config'):
             with open('nextflow.config', 'r') as f:
@@ -176,13 +194,13 @@ class TowerApi:
         topics_to_labels = {}
         for wf in top:
             topic_label_ids = [topics_to_labels.setdefault(t, self.get_label_id_by_name(t) or self.add_label(t)) for t in wf["topics"]]
-            self.add_workflow(compute_id, wf["html_url"], wf, [label_id] + topic_label_ids, config_text)
+            self.add_workflow(compute_id, wf["html_url"], wf, [label_id] + topic_label_ids, config_text, katana_username)
 
     def get_label_id_by_name(self, label_name: str):
         # NOTE: all /labels endpoints are undocumented, but you can't get computeId for pipelines after they are
         # defined so a label helps us track automanaged
         params = {**self._params, **{"search": label_name}}
-        labels = self._handle_json_post_json("labels", params = params)["labels"]
+        labels = self._handle_get_json("labels", params = params)["labels"]
         return labels[0]["id"] if len(labels) else None
 
     def add_label(self,name: str):
@@ -207,15 +225,15 @@ class TowerApi:
         return self.get_credentials_id_by_name(credentials_name) or \
                self.add_credentials(credentials_name, create_key('tower@biocommons'))
 
-    def get_or_create_compute(self, compute_name: str, credentials_name):
+    def get_or_create_compute(self, compute_name: str, credentials_name, katana_username: str):
         return self.get_compute_id_by_name(compute_name) or \
-               self.add_compute(compute_name, self.get_or_create_credentials(credentials_name))
+               self.add_compute(compute_name, self.get_or_create_credentials(credentials_name), katana_username)
 
-    def setup(self, compute_name: str, credentials_name: str, label_name: str):
-        compute_id = self.get_or_create_compute(compute_name, credentials_name)
+    def setup(self, compute_name: str, credentials_name: str, label_name: str, katana_username: str):
+        compute_id = self.get_or_create_compute(compute_name, credentials_name, katana_username)
         self.make_compute_primary(compute_id)
         label_id = self.get_label_id_by_name(label_name) or self.add_label(label_name)
-        self.add_top_nfcore_workflows(compute_id, label_id)
+        self.add_top_nfcore_workflows(compute_id, label_id, katana_username)
 
     def clean(self, compute_name: str, credentials_name: str, label_name: str):
         # Clean all pipelines with label
@@ -240,7 +258,7 @@ class TowerApi:
 def create_key(key_comment, dry_run=False): #e.g. 'tower@biocommons'
     global SSH_FROM_RESTRICTIONS
 
-    privateKey = None
+    private_key = None
     originalAuthName = os.path.expanduser('~/.ssh/authorized_keys')
 
     # Copy existing authorized public keys into memory
@@ -271,7 +289,7 @@ def create_key(key_comment, dry_run=False): #e.g. 'tower@biocommons'
             with open(os.path.join(tmpdir, 'tower.pub'), 'r') as pub:
                 newAuth.write(SSH_FROM_RESTRICTIONS + ' ' + pub.read())
 
-        with open(os.path.join(tmpdir, 'tower'), 'r') as priv: privateKey = priv.read()
+        with open(os.path.join(tmpdir, 'tower'), 'r') as priv: private_key = priv.read()
 
         # Atomically update authorized keys
         os.chmod(new_auth_path, 0o644)
@@ -279,14 +297,10 @@ def create_key(key_comment, dry_run=False): #e.g. 'tower@biocommons'
             with open(new_auth_path, 'r') as newAuth: print("Would have updated authorized keys to: " + newAuth.read())
         else: 
             os.rename(new_auth_path, originalAuthName)
-    return privateKey
+    return private_key
 
 
 if __name__ == "__main__":
-    MIN_PYTHON = (3, 6)
-    if sys.version_info < MIN_PYTHON:
-        sys.exit("Python %s.%s or later is required.\n" % MIN_PYTHON)
-
     if len(sys.argv) != 2 or sys.argv[1] == "--help":
         sys.exit("Usage: tower_autoconfig.py [setup|clean]")
 
@@ -310,6 +324,9 @@ if __name__ == "__main__":
 
     api = TowerApi("https://{TOWER_HOST}/api/",BEARER, {'workspaceId': TOWER_WORKSPACE_ID} )
 
-    if sys.argv[1] == "setup": api.setup(KATANA_COMPUTE_NAME, KATANA_CREDENTIAL_NAME, KATANA_LABEL_NAME)
-    elif sys.argv[1] == "clean": api.clean(KATANA_COMPUTE_NAME, KATANA_CREDENTIAL_NAME, KATANA_LABEL_NAME)
-    else: sys.exit("Invalid command")
+    if sys.argv[1] == "setup":
+        api.setup(KATANA_COMPUTE_NAME, KATANA_CREDENTIAL_NAME, KATANA_LABEL_NAME, KATANA_USERNAME)
+    elif sys.argv[1] == "clean":
+        api.clean(KATANA_COMPUTE_NAME, KATANA_CREDENTIAL_NAME, KATANA_LABEL_NAME)
+    else:
+        sys.exit("Invalid command")
