@@ -3,36 +3,56 @@ import os, sys, requests, subprocess, tempfile, shutil
 import datetime
 from pathlib import Path
 
+class TowerApiError(Exception):
+    def __init__(self,*args, **kwargs):
+        super.__init__(args,kwargs)
+
 class TowerApi:
     def __init__(self,endpoint : str, bearer: str, params: dict ):
         self._endpoint = endpoint
         self._headers = {'Authorization': f'Bearer {bearer}'}
         self._params = params
 
+    def _handle_get_json(self, endpoint, headers ={}, params ={}) -> dict:
+        response = requests.get(self._endpoint + f"/{endpoint}", headers={**self._headers, ** headers}, params=params)
+        if round(response.status_code/100) != 2:
+            raise TowerApiError(f"request to \"{response.url}\" returned a non 200 status "
+                                f"code of {response.status_code}")
+        return response.json()
+
+    def _handle_json_post_json(self, endpoint, json, headers = {}, params = {}, expected_status_code = 204) -> dict:
+        headers = {**self._headers, **headers}
+        response = requests.post(self._endpoint + f"/{endpoint}",json=json, headers = headers, params = params)
+        if response.status_code != expected_status_code:
+            raise TowerApiError(f"post request to {response.url} returned unexpected status code "
+                                f"{response.status_code}. {expected_status_code} was expected")
+        return response.json()
+
+    def _handle_delete_json(self, endpoint, headers = {}, params = {}, expected_status_code = 204) -> dict:
+        headers = {**self._headers, ** headers}
+        response = requests.delete(self._endpoint + f"/{endpoint}", headers=headers, params = params)
+        if response.status_code != expected_status_code:
+            raise TowerApiError(f"post request to {response.url} returned unexpected status code "
+                                f"{response.status_code}. {expected_status_code} was expected")
+        return response.json()
+
     def get_user_id(self):
-        return requests.get(self._endpoint + f'/user-info', headers=self._headers).json()["user"]["id"]
+        return self._handle_get_json("user-info")["user"]["id"]
 
     def get_workspace_id_by_name(self, user_id: str, workspace_name: str): #e.g. 'UNSW_Sydney'
-        orgs_and_workspaces = requests.get(self._endpoint + f'/user/{user_id}/workspaces',
-                                         headers=self._headers).json()["orgsAndWorkspaces"]
+        orgs_and_workspaces = self._handle_get_json(f'user/{user_id}/workspaces')["orgsAndWorkspaces"]
         return next((x for x in orgs_and_workspaces if x["workspaceName"] == workspace_name), {}).get("workspaceId", None)
 
     def get_compute_id_by_name(self, compute_name: str): #e.g. KATANA_COMPUTE_NAME
-        compute_envs = requests.get(self._endpoint + "/compute-envs",
-                                   headers=self._headers,
-                                   params=self._params).json()["computeEnvs"]
+        compute_envs = self._handle_get_json("compute-envs", params=self._params)["computeEnvs"]
         return next((x for x in compute_envs if x["name"] == compute_name), {}).get("id", None)
 
     def get_credentials_id_by_name(self, credentials_name: str): #e.g. KATANA_CREDENTIAL_NAME
-        credentials = requests.get(self._endpoint + "/credentials",
-                                   headers=self._headers,
-                                   params=self._params).json()["credentials"]
+        credentials = self._handle_get_json("credentials", params=self._params)["credentials"]
         return next((x for x in credentials if x["name"] == credentials_name), {}).get("id", None)
 
     def get_credentials_id_by_compute(self, compute_id: str):
-        return requests.get(self._endpoint + f'/compute-envs/{compute_id}',
-                            headers=self._headers,
-                            params=self._params).json()["credentialsId"]
+        return self._handle_get_json(f"compute-envs/{compute_id}", params=self._params)["credentialsId"]
 
     def add_credentials(self, credentials_name: str, private_key: str): #e.g. KATANA_CREDENTIAL_NAME
         credential_data = {
@@ -46,16 +66,11 @@ class TowerApi:
                 }
             }
         }
-        response = requests.post(self._endpoint + "/credentials",
-                                 json=credential_data,
-                                 headers=self._headers,
-                                 params=self._params)
-
-        if response.status_code != 200: raise Exception(response.json())
-        return response.json()["credentialsId"]
+        response = self.handle_json_post("credentials", credential_data,params=self._params)
+        return response["credentialsId"]
 
     def remove_credentials(self, credentials_id: str):
-        return requests.delete(self._endpoint + f'/credentials/{credentials_id}',
+        return requests.delete(self._endpoint + f'credentials/{credentials_id}',
                                headers=self._headers,
                                params=self._params).status_code == 204
 
@@ -76,24 +91,23 @@ class TowerApi:
             }
         }
 
-        response = requests.post(self._endpoint + "/compute-envs",
-                                 json=compute_data,
-                                 headers=self._headers,
-                                 params=self._params)
-        if response.status_code != 200:
-            raise Exception(response.json())
-        return response.json()["computeEnvId"]
+        response = self._handle_json_post_json("compute-envs", compute_data, params=self._params)
+        return response["computeEnvId"]
 
-    def make_compute_primary(self, compute_id: str):
-        response = requests.post(self._endpoint + f'/compute-envs/{compute_id}/primary',
-                                 headers=self._headers,
-                                 params=self._params)
-        return response.status_code == 204
+    def make_compute_primary(self, compute_id: str) -> bool:
+        try:
+            self._handle_json_post_json(f'compute-envs/{compute_id}/primary', params=self._params)
+        except TowerApiError as e:
+            return False
 
-    def remove_compute(self, compute_id: str):
-        return requests.delete(self._endpoint + f'/compute-envs/{compute_id}',
-                               headers=self._headers,
-                               params=self._params).status_code == 204
+        return True
+
+    def remove_compute(self, compute_id: str) -> bool:
+        try:
+            self._handle_delete_json(f'compute-envs/{compute_id}', params=self._params)
+        except TowerApiError as e:
+            return False
+        return True
 
     def add_workflow(self, compute_id: str, url: str, wf: dict, labels_id: str, config_text: str, katana_username: str):
         pipeline_data = {
@@ -111,27 +125,23 @@ class TowerApi:
             "labelsIds": labels_id
         }
 
-        response = requests.post(self._endpoint + "/pipelines",
-                                 json=pipeline_data,
-                                 headers=self._headers,
-                                 params=self._params)
+        try:
+            self._handle_delete_json("pipelines", pipeline_data, params= self._params)
+        except TowerApiError:
+            return False
+        return True
 
-        if response.status_code != 200:
-            raise Exception(response.json())
-    
     def remove_workflows_if(self, filter_func, should_clean_labels: bool=True):
         label_counts = {}
-        workflows = requests.get(self._endpoint + "/pipelines",
-                                 headers=self._headers,
-                                 params={**self._params,
-                                         **{'attributes': 'labels'}}).json()["pipelines"]
+        params = {**self._params, **{"attributes": "labels"}}
+
+        workflows = self._handle_get_json("pipelines", params=params)["pipelines"]
+
         for wf in workflows:
             should_filter = filter_func(wf)
 
             if should_filter:
-                requests.delete(self._endpoint + f'/pipelines/{wf["pipelineId"]}',
-                                headers=self._headers,
-                                params=self._params)
+                self._handle_delete_json(f'pipelines/{wf["pipelineId"]}', params=self._params)
 
             if should_clean_labels:
                 for label in wf["labels"]:
@@ -169,10 +179,10 @@ class TowerApi:
             self.add_workflow(compute_id, wf["html_url"], wf, [label_id] + topic_label_ids, config_text)
 
     def get_label_id_by_name(self, label_name: str):
-        # NOTE: all /labels endpoints are undocumented, but you can't get computeId for pipelines after they are defined so a label helps us track automanaged
-        labels = requests.get(self._endpoint + f'/labels',
-                              headers=self._headers,
-                              params={**self._params, **{"search": label_name}}).json()["labels"]
+        # NOTE: all /labels endpoints are undocumented, but you can't get computeId for pipelines after they are
+        # defined so a label helps us track automanaged
+        params = {**self._params, **{"search": label_name}}
+        labels = self._handle_json_post_json("labels", params = params)["labels"]
         return labels[0]["id"] if len(labels) else None
 
     def add_label(self,name: str):
@@ -181,17 +191,17 @@ class TowerApi:
             "name": name
         }
 
-        response = requests.post(self._endpoint + "/labels",
-                                 json=label_data,
-                                 headers=self._headers,
-                                 params=self._params)
-        if response.status_code != 200: raise Exception(response.json())
-        return response.json()["id"]
+        response = self._handle_json_post_json("labels", json=label_data, params = self._params, expected_status_code=200)
 
-    def remove_label(self, label_id: str):
-        return requests.delete(self._endpoint + f'/labels/{label_id}',
-                               headers=self._headers,
-                               params=self._params).status_code == 204
+        return response["id"]
+
+    def remove_label(self, label_id: str) -> bool:
+        try:
+            self._handle_delete_json(f'labels/{label_id}', params=self._params)
+        except TowerApiError:
+            return False
+        return True
+
 
     def get_or_create_credentials(self, credentials_name: str):
         return self.get_credentials_id_by_name(credentials_name) or \
