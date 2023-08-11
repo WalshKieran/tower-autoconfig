@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+# Tower agent with auto-update and timeout argument (requires: java,curl)
+# Timeout shouldn't be shorter than workflow heartbeat interval (default 45 seconds, TOWER_AGENT_HEARTBEAT)
+DEFAULT_TIMEOUT=60
+DEFAULT_ENDPOINT=https://tower.nf/api
+
+agent_connection_id=$1
+work_dir=$2
+endpoint="${3:-$DEFAULT_ENDPOINT}"
+timeout_duration="${4:-$DEFAULT_TIMEOUT}"
+
+if [[ "$#" -lt 2 || -z $TOWER_ACCESS_TOKEN || "$1" == --help ]]; then
+    echo "Usage: $0 <agent_connection_id> <work_dir> [ endpoint ] [ timeout ]"
+    echo "  agent_connection_id     Unique identifier for this agent, find in Tower UI"
+    echo "  work_dir                Default Nextflow workdir, also stores agent executable"
+    echo "  endpoint                Tower API endpoint (default $DEFAULT_ENDPOINT)"
+    echo "  timeout_duration        Timeout in seconds (default $DEFAULT_TIMEOUT)"
+    printf "\nMake sure TOWER_ACCESS_TOKEN is exported\n"
+    exit 1
+fi
+
+cleanup_and_exit() {
+    kill "$command_pid"
+    wait "$command_pid"
+    rm -f "$output_pipe"
+    exit 0
+}
+
+# Exit on errors, ignore disconnnected stdout/stderr (but must echo || true)
+set -euo pipefail
+
+trap '' PIPE
+
+# Maintain up-to-date agent version
+agent_jar="$work_dir/tw-agent.jar"
+curl -LsS -o "$agent_jar.part" -z "$agent_jar" https://github.com/seqeralabs/tower-agent/releases/latest/download/tw-agent.jar
+[ -f "$agent_jar.part" ] && mv "$agent_jar.part" "$agent_jar"
+
+# Start agent in background with captured output
+output_pipe=$(mktemp -u)
+mkfifo "$output_pipe"
+java -jar "$agent_jar" "$agent_connection_id" -w "$work_dir" -u "$endpoint" &> "$output_pipe" &
+command_pid=$!
+trap 'cleanup_and_exit' INT TERM
+
+# Monitor agent log for data sent/received
+last_sent_time=$(date +%s)
+while IFS= read -r line; do
+    echo "$line" || true
+
+    # Update sent time if log isn't a heartbeat
+    if echo "$line" | grep -v -q "heartbeat"; then
+        last_sent_time=$(date +%s)
+    fi
+
+    # Check if the inactivity timeout has been reached
+    current_time=$(date +%s)
+    time_diff=$((current_time - last_sent_time))
+    if [ "$time_diff" -gt "$timeout_duration" ]; then
+        cleanup_and_exit
+        echo "Inactivity timeout reached. Exiting..." || true
+    fi
+done < "$output_pipe"

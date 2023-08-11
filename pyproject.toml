@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "tower-autoconfig"
+version = "0.1.0"
+description = "Simple package to automatically configure Tower workspaces directly from the target HPC"
+authors = ["Kieran Walsh <k.walsh@unsw.edu.au>"]
+readme = "README.md"
+
+include = ["tower_autoconfig/bin/tw-agent-timeout"]
+
+classifiers = [
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux"
+]
+
+[tool.poetry.scripts]
+tower-autoconfig = "tower_autoconfig.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.6"
+aiohttp = "^3.7.4"
+dnspython = "^2.2.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
