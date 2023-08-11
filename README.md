@@ -71,7 +71,7 @@ Environment variables: TOWER_ACCESS_TOKEN, TOWER_WORKSPACE_ID (optional)
 Probably not interesting, but if you want to use the internal Agent wrapper yourself (that automatically closes after e.g. 300 seconds of no running pipelines):
 ``` bash
 
-curl https://raw.githubusercontent.com/WalshKieran/tower-autoconfig/master/src/bin/tw-agent-timeout -O
+curl https://raw.githubusercontent.com/WalshKieran/tower-autoconfig/master/src/tower_autoconfig/bin/tw-agent-timeout -O
 bash ./tw-agent-timeout YOUR_HPC_GENERATED_NAME /tmp 300
 ```
 Assumes `TOWER_ACCESS_TOKEN` is set - `YOUR_HPC_GENERATED_NAME` is used for documentation consistency, any configered agent connection ID will work 
