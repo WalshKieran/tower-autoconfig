@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # Tower agent with auto-update and timeout argument (requires: java,curl)
-# Timeout shouldn't be shorter than workflow heartbeat interval (default 45 seconds, TOWER_AGENT_HEARTBEAT)
-DEFAULT_TIMEOUT=60
+# But seems to prematurely timeout if there are no run state changes within the timeout
+DEFAULT_TIMEOUT=3600
 DEFAULT_ENDPOINT=https://tower.nf/api
 
 agent_connection_id=$1

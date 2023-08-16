@@ -1,8 +1,9 @@
-import os, asyncio, logging, argparse, string
+import os, asyncio, logging, argparse, string, sys
 
 from tower_autoconfig.autoconfig import TowerAutoconfig
 from tower_autoconfig.api import RECOGNIZED_PLATFORMS
-from tower_autoconfig.utils import guess_node, guess_platform, create_ssh_restriction
+from tower_autoconfig.agent import EXEC_PATH
+from tower_autoconfig.utils import AUTH_KEY_PATH, guess_node, guess_platform, create_ssh_restriction, source_to_text, verify_external_server_is_me
 
 async def _ask(command, subcommand, server, workspace_id, user, compute_host, compute_name, compute_id, credentials_name, credentials_id, pipelines_add, pipelines_remove, shouldForce):
     print(f'Connected as "{user}" (https://{server} -- {workspace_id or "personal"})')
@@ -18,10 +19,14 @@ async def _ask(command, subcommand, server, workspace_id, user, compute_host, co
     if command == 'setup':
         if not credentials_id or shouldForce: 
             print(f'Autoconfig will {"UPDATE" if credentials_id else "install NEW"} {subcommand} credentials "{credentials_name}"')
+            if subcommand == 'ssh':
+                print(f'Autoconfig will {"UPDATE" if credentials_id else "ADD"} key to {AUTH_KEY_PATH}')
         if not compute_id or shouldForce: 
             print(f'Autoconfig will {"UPDATE" if compute_id else "install NEW"} compute environment "{compute_name}"')
     elif command == 'clean':
-        if credentials_id: print(f'Autoconfig will DELETE credentials "{credentials_name}"')
+        if credentials_id: 
+            print(f'Autoconfig will DELETE credentials "{credentials_name}"')
+            print(f'Autoconfig will REMOVE created keys from {AUTH_KEY_PATH}')
         if compute_id: print(f'Autoconfig will DELETE compute environment "{compute_name}"')
 
     if pipelines_add and len(pipelines_add): 
@@ -36,12 +41,13 @@ async def _ask(command, subcommand, server, workspace_id, user, compute_host, co
         if answer.lower() in ['y', 'yes']: return True
         elif answer.lower() in ['n', 'no']: return False
 
-
 async def _run(args, bearer, workspace_id):
     new_pipelines = getattr(args, 'pipelines', [])
     compute_platform = getattr(args, 'platform', None)
+    compute_queue_options = getattr(args, 'queue_options', None)
     shouldForce = getattr(args, 'force', False)
     workdir = getattr(args, 'launchdir', False)
+    if workdir: workdir = os.path.abspath(os.path.expanduser(workdir))
     
     skipPipe = (new_pipelines is None)
 
@@ -70,17 +76,20 @@ async def _run(args, bearer, workspace_id):
         remove_pipeline_tasks = [] if not pipelines_remove else [auto.api.remove_pipeline(pipeline_name_to_id[p]) for p in pipelines_remove]
         
         if args.command == 'clean':
+            auto.clean_ssh()
             remove_credential_tasks = [] if not credentials_id else [auto.api.remove_credentials(credentials_id)]
             remove_compute_tasks = [] if not compute_id else [auto.api.remove_compute(compute_id)]
             await asyncio.gather(*remove_credential_tasks, *remove_compute_tasks, *remove_label_tasks, *remove_pipeline_tasks)
 
+            print('Finished cleaning')
+
         if args.command == 'setup':
             if args.subcommand == 'ssh':
                 ssh_restrictions = f'restrict,pty,{create_ssh_restriction(30)}'
-                compute_id, credentials_id = await auto.setup_ssh(compute_name, '', compute_platform, compute_host, compute_user, workdir, credentials_name, '', compute_id, credentials_id, shouldForce, ssh_restrictions)
+                compute_id, credentials_id = await auto.setup_ssh(compute_name, '', compute_platform, compute_host, compute_user, compute_queue_options, workdir, credentials_name, '', compute_id, credentials_id, shouldForce, ssh_restrictions)
             elif args.subcommand == 'agent':
                 agent_connection_id = compute_name
-                compute_id, credentials_id = await auto.setup_agent(compute_name, '', compute_platform, compute_host, compute_user ,workdir, credentials_name, '', compute_id, credentials_id, shouldForce, agent_connection_id)
+                compute_id, credentials_id = await auto.setup_agent(compute_name, '', compute_platform, compute_host, compute_user, compute_queue_options, workdir, credentials_name, '', compute_id, credentials_id, shouldForce, agent_connection_id)
 
             if not skipPipe: 
                 # Group and run all independent tasks, including adding labels
@@ -93,25 +102,26 @@ async def _run(args, bearer, workspace_id):
                     label_name_to_id[labels_add[i]] = new_label_ids[i]
 
                 # Create new pipelines
-                config_text = prerun_text = ''
-                if os.path.exists(args.prerun):
-                    with open(args.prerun, 'r') as f: prerun_text = f.read()
-                if os.path.exists(args.config):
-                    with open(args.config, 'r') as f: config_text = f.read()
-                else:
-                    logging.warning(f'{args.config} does not exist')
-                await auto.setup_pipelines(compute_id, pipelines_add, pipeline_name_to_id, label_name_to_id, remote_pipelines_dict, pipeline_suffix, config_text, prerun_text, workdir, args.profiles or [])
-
+                await auto.setup_pipelines(compute_id, pipelines_add, pipeline_name_to_id, label_name_to_id, remote_pipelines_dict, pipeline_suffix, source_to_text(args.config), source_to_text(args.prerun), workdir, args.profiles or [])
+            
+            print('Finished setting up')
+            
             if args.subcommand == 'agent':
-                print(f'Agent configured - in future, launch using "tw-agent --url {auto.endpoint} --work-dir {workdir} {agent_connection_id}"')
-        print('Done')
+                print(f'In future, start agent using either:')
+                print(f'    a) tower-autoconfig-agent {agent_connection_id} {workdir} {auto.endpoint} 43200')
+                print(f'    b) tw-agent --work-dir {workdir} --url {auto.endpoint} {agent_connection_id}')
+        
+
+def agent():
+    os.execv(EXEC_PATH, sys.argv)
 
 def main():
     default_node = default_platform = None
     try:
-        default_node = guess_node()
+        external_ip, default_node = guess_node()
         default_platform = guess_platform()
-    except Exception:
+    except Exception as e:
+        print(e)
         logging.critical('Failed to resolve host or connect to internet - are you connected to internet?')
         exit(1)
 
@@ -124,11 +134,12 @@ def main():
 
     setup_parent = argparse.ArgumentParser(add_help=False)
     setup_parent.add_argument('--platform', help='compute platform (guessed: %(default)s)', required=not default_platform, default=default_platform)
+    setup_parent.add_argument('--queue_options', help='arguments to add to head job submission e.g. resources')
     setup_parent.add_argument('--launchdir', required=True, help='scratch directory used for launching workflows')
     setup_parent.add_argument('--pipelines', nargs='+', help=f'if provided, add/remove pipelines ending in cluster\'s "friendly" generated name to match provided list')
     setup_parent.add_argument('--profiles', nargs='+', help='if provided, profiles assigned to any NEW/UPDATED pipelines')
-    setup_parent.add_argument('--config', help='nextflow config assigned to NEW/UPDATED pipelines - executor must match platform (default: %(default)s)', default='./nextflow.config')
-    setup_parent.add_argument('--prerun', help='script to prepare launch environment e.g load module', default='./prerun.sh')
+    setup_parent.add_argument('--config', help='nextflow config file/url assigned to NEW/UPDATED pipelines for when there is no organisation profile')
+    setup_parent.add_argument('--prerun', help='script to prepare launch environment e.g load module')
     setup_parent.add_argument('-f', '--force', help=f'force reload pipelines/compute if e.g. config has changed - does not break existing runs', action='store_true')
 
     main_subparsers = parser.add_subparsers(title='commands', dest='command')
@@ -171,6 +182,9 @@ def main():
 
     if args.command == 'setup' and args.platform not in RECOGNIZED_PLATFORMS:
         parser.error(f'Invalid compute platform - must be one of {", ".join(RECOGNIZED_PLATFORMS)}')
+
+    if args.command == 'setup' and args.subcommand == 'ssh' and args.node == default_node and not verify_external_server_is_me(external_ip):
+        parser.error('Invalid node, manually specify')
 
     loop = asyncio.get_event_loop()
     loop.run_until_complete(_run(args, bearer, workspace_id))

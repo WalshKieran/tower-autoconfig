@@ -158,7 +158,7 @@ class TowerApi:
     async def remove_credentials(self, credentials_id: str):
         await self._handle_json_delete_json(f'credentials/{credentials_id}')
  
-    async def add_compute(self, compute_name: str, compute_description: str, compute_platform: str, compute_host: str, compute_user: str, credentials_id: str, workdir: str, existing_id: str) -> str:
+    async def add_compute(self, compute_name: str, compute_description: str, compute_platform: str, compute_host: str, compute_user: str, compute_queue_options: str, credentials_id: str, workdir: str, existing_id: str) -> str:
         compute_data = {
             'computeEnv': {
                 **({'id': existing_id} if existing_id else {}),
@@ -170,6 +170,8 @@ class TowerApi:
                     'workDir': workdir,
                     'userName': compute_user,
                     'hostName': compute_host,
+                    **({'headJobOptions': compute_queue_options.replace('"', '')} if compute_queue_options else {})
+
                 }
             }
         }
@@ -184,7 +186,7 @@ class TowerApi:
     async def remove_compute(self, compute_id: str) -> bool:
         await self._handle_json_delete_json(f'compute-envs/{compute_id}')
 
-    async def add_pipeline(self, pipeline_name: str, pipeline_description: str, pipeline_icon: str, pipeline_url: str, compute_id: str, label_ids: List[str],
+    async def add_pipeline(self, pipeline_name: str, pipeline_revision: str, pipeline_description: str, pipeline_icon: str, pipeline_url: str, compute_id: str, label_ids: List[str],
                     config_text: str, prerun_text: str, workdir: str, profiles: List[str] = [], existing_id: Optional[str]=None) -> str:
         pipeline_data = {
             'name': pipeline_name,
@@ -198,6 +200,7 @@ class TowerApi:
                 'configText': config_text,
                 'configProfiles': profiles,
                 'preRunScript': prerun_text,
+                **({'revision': pipeline_revision} if pipeline_revision else {})
             },
             'labelIds': label_ids
         }

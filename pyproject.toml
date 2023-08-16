@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "tower-autoconfig"
 version = "0.1.0"
-description = "Simple package to automatically configure Tower workspaces directly from the target HPC"
+description = "Simple proof of concept package to quickly test Nextflow Tower from the target HPC"
 authors = ["Kieran Walsh <k.walsh@unsw.edu.au>"]
 readme = "README.md"
 
@@ -14,6 +14,7 @@ classifiers = [
 
 [tool.poetry.scripts]
 tower-autoconfig = "tower_autoconfig.cli:main"
+tower-autoconfig-agent = "tower_autoconfig.cli:agent"
 
 [tool.poetry.dependencies]
 python = "^3.6"

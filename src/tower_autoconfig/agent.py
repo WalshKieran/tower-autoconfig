@@ -1,6 +1,8 @@
 import asyncio, contextlib
 import tower_autoconfig
 
+EXEC_PATH=f'{tower_autoconfig.__path__[0]}/bin/tw-agent-timeout'
+
 class TowerAgentError(Exception):
     pass
 
@@ -21,7 +23,7 @@ class TowerAgentTimeout:
 
     async def __aenter__(self):
         stdout = ''
-        self.cmd = [f'{tower_autoconfig.__path__[0]}/bin/tw-agent-timeout', self.agent_connection_id, self.workdir, self.server, str(self.timeout)]
+        self.cmd = [EXEC_PATH, self.agent_connection_id, self.workdir, self.server, str(self.timeout)]
         self.p = await asyncio.create_subprocess_exec(*self.cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True)
         self.pid = self.p.pid
         async for line in self.p.stdout:
