@@ -21,7 +21,7 @@ python3 -m pip install --user git+https://github.com/WalshKieran/tower-autoconfi
 tower-autoconfig setup ssh --profiles test \
 --config https://raw.githubusercontent.com/WalshKieran/tower-autoconfig/master/example/nextflow.config \
 --prerun <(echo "module load java/11.0.17_8-openjdk nextflow/22.10.7") \
---queue_options '"-lselect=1,walltime=12:00:00,ncpus=4:mem=4GB"' \
+--queue_options '"-lwalltime=12:00:00,select=1:ncpus=4:mem=4GB"' \
 --launchdir "$LAUNCH_DIR" --pipelines nf-core/rnaseq
 ```
 
