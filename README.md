@@ -46,7 +46,7 @@ module load python3/3.9.2 java/jdk-17.0.2
 python3 -m pip install --user git+https://github.com/WalshKieran/tower-autoconfig
 
 # Add nf-core/rnaseq AGENT to your Tower personal workspace
-tower-autoconfig setup ssh --node gadi.nci.org.au --profiles nci_gadi test \
+tower-autoconfig setup agent --node gadi.nci.org.au --profiles nci_gadi test \
 --prerun <(echo "module load singularity nextflow/22.04.3") \
 --queue_options '"-q copyq -lwalltime=10:00:00,ncpus=1,mem=4GB"' \
 --launchdir "$LAUNCH_DIR" --pipelines nf-core/rnaseq@3.9
