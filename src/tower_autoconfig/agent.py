@@ -1,4 +1,4 @@
-import asyncio, contextlib
+import asyncio, contextlib, os
 import tower_autoconfig
 
 EXEC_PATH=f'{tower_autoconfig.__path__[0]}/bin/tw-agent-timeout'
@@ -12,7 +12,7 @@ Also uses a lightweight bash wrapper to prevent the Agent accidentally running f
 If this feature is added to the official agent, we can still keep the context manager
 '''
 class TowerAgentTimeout:
-    def __init__(self, agent_connection_id, workdir, server, timeout, leave_alive=False):
+    def __init__(self, agent_connection_id, workdir, server, timeout, leave_alive=False, bearer=None):
         self.agent_connection_id = agent_connection_id
         self.workdir = workdir
         self.server = server
@@ -20,11 +20,12 @@ class TowerAgentTimeout:
         self.leave_alive = leave_alive
         self.pid = None
         self.cmd = ''
+        self.env = {**os.environ.copy(), 'TOWER_ACCESS_TOKEN': bearer} if bearer else None
 
     async def __aenter__(self):
         stdout = ''
         self.cmd = [EXEC_PATH, self.agent_connection_id, self.workdir, self.server, str(self.timeout)]
-        self.p = await asyncio.create_subprocess_exec(*self.cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True)
+        self.p = await asyncio.create_subprocess_exec(*self.cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True, env=self.env)
         self.pid = self.p.pid
         async for line in self.p.stdout:
             line = line.decode()

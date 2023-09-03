@@ -105,11 +105,11 @@ class TowerAutoconfig:
         return compute_id, credentials_id
 
     async def setup_agent(self, compute_name: str, compute_description: str, compute_platform: str, compute_host: str, compute_user: str, compute_queue_options: str, workdir: str,
-        credentials_name: str, credentials_description: str, compute_id: Optional[str]=None, credentials_id: Optional[str]=None, shouldForce: bool=False, agent_connection_id: str='autoconfigured') -> str:
+        credentials_name: str, credentials_description: str, compute_id: Optional[str]=None, credentials_id: Optional[str]=None, shouldForce: bool=False, agent_connection_id: str='autoconfigured', bearer: str=None) -> str:
 
         if not compute_id or shouldForce:            
             # Start agent on hard-coded connection ID
-            async with TowerAgentTimeout(agent_connection_id, workdir, self.endpoint, 300) as agent:
+            async with TowerAgentTimeout(agent_connection_id, workdir, self.endpoint, 300, bearer=bearer) as agent:
                 # Create matching credential and/or compute while agent is running
                 if not credentials_id or shouldForce:
                     credentials_id = await self.api.add_credentials_agent(credentials_name, credentials_description, workdir, credentials_id, agent_connection_id)

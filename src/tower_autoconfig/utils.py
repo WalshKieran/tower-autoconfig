@@ -19,16 +19,24 @@ def source_to_text(source):
             logging.warning(f'{source} could not be resolved')
     return None
 
+def guess_ip():
+    my_resolver = resolver.Resolver(configure=False)
+    my_resolver.nameservers = ['208.67.222.222', '208.67.220.220']
+    query_result = my_resolver.query('myip.opendns.com', 'a')
+    if query_result:
+        return query_result[0].address
+    return None
+
 def guess_node():
-    external_ip = urllib.request.urlopen('http://ipv4.icanhazip.com').read().decode().rstrip()
-    ssh_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    ssh_socket.settimeout(2)
-    ssh_open = ssh_socket.connect_ex((external_ip, 22)) == 0
-    if ssh_open:
-        reversed_ip = reversename.from_address(external_ip)
-        hostname = str(resolver.resolve(reversed_ip, 'PTR')[0]).rstrip('.')
-        return external_ip, hostname
-    return None, None
+    external_ip = guess_ip()
+    if external_ip:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        ssh_open = s.connect_ex((external_ip, 22)) == 0
+        if ssh_open:
+            reversed_ip = reversename.from_address(external_ip)
+            return external_ip, str(resolver.resolve(reversed_ip, 'PTR')[0]).rstrip('.')
+    return external_ip, None
 
 def guess_platform():
     known_hpcs = [
@@ -99,7 +107,7 @@ def create_ssh_key(key_comment: str, ssh_restrictions: str):
     return private_key
 
 '''
-In case e.g. icanhazip.com spoofed your IP, instantly got a hold of your new public keys file and 
+In case e.g. opendns spoofed your IP, instantly got a hold of your new public keys file and 
 impersonated your HPC when Tower reached out - this confirms a ssh server is you, even if 
 the only thing at risk is data Tower chooses to send to it, not the HPC.
 
